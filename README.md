@@ -8,7 +8,7 @@ This is a TUI based implemenation of [Conways Game of Life](). Built in Go using
 ## Controls
 
 | Action | Key |
-----------------
+|---|-----|--------|
 | Movement | hjkl or arrow keys |
 | Quit | "Ctrl-C" or q |
 | Start | r |
