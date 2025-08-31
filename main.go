@@ -7,12 +7,13 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
-const DOT = '⊡'
-const SQR = '▣'
-const HLW = '□'
-const CURS = '█' // TODO: Replace with underline style or something
+const DOT = "⊡"
+const SQR = "▣"
+const HLW = "□"
+const CURS = "█" // TODO: Replace with underline style or something
 
 const (
 	STATE_PREINIT = iota
@@ -28,9 +29,25 @@ const (
 	CELL_DEAD
 )
 
+const HEADER_ROWS = 4
+
+var (
+	aliveStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("45"))
+	newStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("77"))
+	dyingStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("124"))
+	deadStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	cursorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("7"))
+	borderStyle = lipgloss.NewStyle().
+			Border(lipgloss.NormalBorder()).
+			Padding(0, 0).
+			Foreground(lipgloss.Color("8"))
+)
+
 type ConwayGame struct {
 	board       [][]int8
 	writeBoard  [][]int8
+	width       int
+	height      int
 	tickSpeedMS int
 	tick        int
 	state       int
@@ -39,32 +56,36 @@ type ConwayGame struct {
 	changes     int
 }
 
-func initializeGame() ConwayGame {
-	// make the board
-	sizeY := 30
-	sizeX := 100
-	createBoard := make([][]int8, 0)
-	writeBoard := make([][]int8, 0)
-	for range sizeY {
-		createBoard = append(createBoard, make([]int8, sizeX))
-		writeBoard = append(writeBoard, make([]int8, sizeX))
-	}
-	for y := range sizeY {
-		for x := range sizeX {
-			createBoard[y][x] = CELL_DEAD
-			writeBoard[y][x] = CELL_DEAD
-		}
-	}
+func New(tickSpeed int) ConwayGame {
 	return ConwayGame{
-		board:       createBoard,
-		writeBoard:  writeBoard,
-		tickSpeedMS: 250,
+		board:       [][]int8{},
+		writeBoard:  [][]int8{},
+		width:       0,
+		height:      0,
+		tickSpeedMS: tickSpeed,
 		tick:        0,
 		state:       STATE_PREINIT,
 		cursorX:     0,
 		cursorY:     0,
-		changes:     0,
 	}
+}
+
+func (c ConwayGame) initializeGame() ([][]int8, [][]int8) {
+	// make the board
+	createBoard := make([][]int8, 0)
+	writeBoard := make([][]int8, 0)
+	for range c.height {
+		createBoard = append(createBoard, make([]int8, c.width))
+		writeBoard = append(writeBoard, make([]int8, c.width))
+	}
+	for y := range c.height {
+		for x := range c.width {
+			createBoard[y][x] = CELL_DEAD
+			writeBoard[y][x] = CELL_DEAD
+		}
+	}
+
+	return createBoard, writeBoard
 }
 
 type triggerMsg int
@@ -196,14 +217,14 @@ func (c ConwayGame) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		// test the key
-		case "ctrl_c", "q":
+		case tea.KeyCtrlC.String(), "q":
 			return c, tea.Quit
 		case "left", "h":
 			if c.cursorX > 0 {
 				c.cursorX--
 			}
 		case "right", "l":
-			if c.cursorX < len(c.board[0]) {
+			if c.cursorX < len(c.board[0])-1 {
 				c.cursorX++
 			}
 		case "up", "k":
@@ -211,7 +232,7 @@ func (c ConwayGame) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				c.cursorY--
 			}
 		case "down", "j":
-			if c.cursorY < len(c.board) {
+			if c.cursorY < len(c.board)-1 {
 				c.cursorY++
 			}
 		case "enter", "m":
@@ -223,6 +244,14 @@ func (c ConwayGame) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "r":
 			c.state = STATE_RUNNING
+		}
+	case tea.WindowSizeMsg:
+		if c.width < 1 {
+			// remove boarder rows
+			c.width = msg.Width - 2
+			// remove header rows and boarder rows
+			c.height = msg.Height - 2 - HEADER_ROWS
+			c.board, c.writeBoard = c.initializeGame()
 		}
 	}
 	return c, nil
@@ -258,53 +287,63 @@ func (c ConwayGame) cellState(y int, x int) string {
 }
 
 func (c ConwayGame) View() string {
-	s := strings.Builder{}
-
-	s.WriteString(fmt.Sprintf("Cursor: (%d, %d)\n", c.cursorY, c.cursorX))
-	s.WriteString(fmt.Sprintf("Cursor Cell: %s\n", c.cellState(c.cursorY, c.cursorX)))
-	s.WriteString(fmt.Sprintf("Neighbor Count: %d\n", c.getNeighborCount(c.cursorY, c.cursorX)))
-	s.WriteString(fmt.Sprintf("Tick: %d\n", c.tick))
-	s.WriteString(fmt.Sprintf("State: %s\n", c.getState()))
-
-	// drop top boarder
-	s.WriteRune('-') // left hand column header
-	for range len(c.board[0]) {
-		s.WriteRune('-')
+	if c.width < 1 || c.height < 1 {
+		return "Loading..."
 	}
-	s.WriteRune('-') // right hand column header
-	s.WriteRune('\n')
+
+	s := strings.Builder{}
+	header := strings.Builder{}
+
+	header.WriteString(fmt.Sprintf("Cursor: (%d, %d)\n", c.cursorY, c.cursorX))
+	header.WriteString(fmt.Sprintf("Cursor Cell: %s\n", c.cellState(c.cursorY, c.cursorX)))
+	// s.WriteString(fmt.Sprintf("Neighbor Count: %d\n", c.getNeighborCount(c.cursorY, c.cursorX)))
+	header.WriteString(fmt.Sprintf("Tick: %d\n", c.tick))
+	header.WriteString(fmt.Sprintf("State: %s", c.getState()))
 
 	for y, row := range c.board {
-		s.WriteRune('|')
 		for x, item := range row {
 			if y == c.cursorY && x == c.cursorX {
 				// cursor
-				s.WriteRune(SQR)
+				s.WriteString(cursorStyle.Render(SQR))
 				continue
 			}
-			if item == CELL_DEAD || item == CELL_DYING {
-				// dead cell
-				s.WriteRune(HLW)
+			// dead cell
+			if item == CELL_DEAD {
+				s.WriteString(deadStyle.Render(HLW))
+				continue
+			}
+			if item == CELL_DYING {
+				s.WriteString(dyingStyle.Render(HLW))
 				continue
 			}
 			// live cell
-			s.WriteRune(DOT)
+			if item == CELL_ALIVE {
+				s.WriteString(aliveStyle.Render(DOT))
+				continue
+			}
+			if item == CELL_NEW {
+				s.WriteString(newStyle.Render(DOT))
+				continue
+			}
 		}
-		s.WriteRune('|')
-		s.WriteRune('\n')
+		if y != len(c.board)-1 {
+			s.WriteRune('\n')
+		}
 	}
 
-	// drop bottom boarder
-	s.WriteRune('-') // left hand column footer
-	for range len(c.board[0]) {
-		s.WriteRune('-')
-	}
-	s.WriteRune('-') // right hand column footer
-	return s.String()
+	return borderStyle.Render(header.String() + "\n" + s.String())
 }
 
 func main() {
-	p := tea.NewProgram(initializeGame())
+	sModel := NewSelectorModel()
+	s := tea.NewProgram(&sModel)
+
+	if _, err := s.Run(); err != nil {
+		fmt.Printf("There has been an error: %v\n", err)
+		os.Exit(1)
+	}
+
+	p := tea.NewProgram(New(sModel.TickSpeedMS))
 	if _, err := p.Run(); err != nil {
 		fmt.Printf("There has been an error: %v\n", err)
 		os.Exit(1)
